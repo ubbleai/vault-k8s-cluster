@@ -1,0 +1,9 @@
+consul.codefiction.io
+vault.codefiction.io
+*.pem
+*.crt
+*.csr
+stdout
+stderr
+test
+acl_agent_token.json

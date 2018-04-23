@@ -1,0 +1,140 @@
+apiVersion: apps/v1beta1
+kind: StatefulSet
+metadata:
+  name: vault
+spec:
+  serviceName: vault
+  replicas: 2
+  template:
+    metadata:
+      labels:
+        app: vault
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchExpressions:
+                  - key: app
+                    operator: In
+                    values:
+                      - vault
+              topologyKey: kubernetes.io/hostname
+      terminationGracePeriodSeconds: 10
+      securityContext:
+        fsGroup: 1000
+      containers:
+        - name: vault
+          image: "vault:0.10.0"
+          env:
+            - name: MY_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: VAULT_CONSUL_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: vault-consul-key
+                  key: consul-key
+            - name: VAULT_LOCAL_CONFIG
+              value:
+                  cluster_addr = "https://$(MY_POD_NAME):8201"
+                  backend "consul" {
+                    address = "http://localhost:8500"
+                    token = "$(VAULT_CONSUL_KEY)"
+                    ca_file =  "/etc/consul-tls/ca.pem",
+                    cert_file = "/etc/consul-tls/consul.pem",
+                    key_file = "/etc/consul-tls/consul-key.pem",
+                  }
+                  listener "tcp" {
+                    address = "0.0.0.0:8200"
+                    tls_cert_file = "/etc/tls/vault.pem"
+                    tls_key_file = "/etc/tls/vault-key.pem"
+                  }
+                  listener "tcp" {
+                    address = "0.0.0.0:9000"
+                    tls_disable = "true"
+                  }
+                  api_addr = "https://$(MY_POD_NAME):8200"
+          args:
+            - "server"
+          securityContext:
+            capabilities:
+              add:
+                - IPC_LOCK
+          volumeMounts:
+            - name: tls
+              mountPath: /etc/tls
+            - name: consultls
+              mountPath: /etc/consul-tls
+          readinessProbe:
+            httpGet:
+              path: /v1/sys/leader
+              port: 9000
+            initialDelaySeconds: 30
+            timeoutSeconds: 1
+          ports:
+          - containerPort: 8200
+            name: http
+          - containerPort: 8201
+            name: backend
+          - containerPort: 9000
+            name: monitor-port
+        - name: consul-agent-client
+          env:
+            - name: MY_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: GOSSIP_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: consul
+                  key: gossip-encryption-key
+            - name: NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          image: "consul:1.0.7"
+#          resources:
+#            limits:
+#              cpu: 100m
+#              memory: 200Mi
+          args:
+            - "agent"
+            - "-datacenter=dc1"
+            - "-data-dir=/consul/data"
+            - "-domain=cluster.local"
+            - "-retry-join=consul.default.svc.cluster.local"
+            - "-config-dir=/consul/config"
+            - "-config-dir=/consul/token"
+            - "-node=$(MY_POD_NAME)"
+            - "-encrypt=$(GOSSIP_ENCRYPTION_KEY)"
+          volumeMounts:
+            - name: config
+              mountPath: /consul/config
+            - name: consul-agent-token
+              mountPath: /consul/token
+            - name: consultls
+              mountPath: /etc/tls
+      volumes:
+        - name: tls
+          secret:
+            secretName: vault
+        - name: config
+          configMap:
+            name: consul
+        - name: consultls
+          secret:
+            secretName: consul
+        - name: consul-agent-token
+          secret:
+            secretName: consul-agent-token

@@ -1,0 +1,22 @@
+{
+  "CN": "vault.dc1.cluster.local",
+  "hosts": [
+    "vault.dc1.cluster.local",
+    "vault-0",
+    "vault-1",
+    "vault.codefiction.io",
+    "127.0.0.1"
+  ],
+  "key": {
+    "algo": "rsa",
+    "size": 2048
+  },
+  "names": [
+    {
+      "C": "FR",
+      "L": "Paris",
+      "O": "Kubernetes",
+      "OU": "Vault"
+    }
+  ]
+}
