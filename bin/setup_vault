@@ -4,10 +4,16 @@ set -e
 
 color=blue
 
+if [[ ! -v VAULT_HOST ]]; then
+  echo "VAULT_HOST needs to be set."
+  exit 1
+fi
+
 print -nP "%F{$color}"
 
 print -P "%F{orange}Cleaning previous certificates ...%F{$color}"
-rm *.pem *.csr || true
+rm *.pem *.csr *.bak tmp stdout stderr acl_agent_token.json || true
+mkdir -p tmp
 
 print -P "%F{orange}Removing previous k8s elements if present ...%F{$color}"
 kubectl delete secret consul 2>&1 >/dev/null || true
@@ -29,12 +35,14 @@ cfssl gencert \
   -profile=default \
   ca/consul-csr.json | cfssljson -bare consul
 
+cat ca/vault-csr.json | sed -E "s/VAULT_HOST/$VAULT_HOST/" > tmp/vault-csr.json
+
 cfssl gencert \
   -ca=ca.pem \
   -ca-key=ca-key.pem \
   -config=ca/ca-config.json \
   -profile=default \
-  ca/vault-csr.json | cfssljson -bare vault
+  tmp/vault-csr.json | cfssljson -bare vault
 
 GOSSIP_ENCRYPTION_KEY=$(consul keygen)
 
@@ -195,3 +203,12 @@ print -P "Setting up consul dns by updating kube-dns to use consul ips"
 CONSUL_IPS=$(kubectl describe pods consul | grep "^IP" | sed -E 's/^.* ([0-9].+)$/"\1:8600"/'  | paste -sd "," -)
 cat configmaps/kube-dns.yaml | sed "s/CONSUL_IPS/$CONSUL_IPS/" > kube-dns.yaml
 kubectl apply -f kube-dns.yaml
+
+print -P "Creating nginx load balancer with ssl termination for external host %F{yellow}$VAULT_HOST%F{$color}"
+cat configs/nginx.conf | sed -E "s/VAULT_HOST/$VAULT_HOST/" > tmp/nginx.conf
+kubectl create configmap nginx-config --from-file tmp/nginx.conf
+kubectl create secret generic vault-certificates \
+  --from-file $VAULT_HOST/privkey.pem \
+  --from-file $VAULT_HOST/fullchain.pem
+kubectl apply -f deployments/nginx.yaml
+kubectl apply -f services/nginx.yaml

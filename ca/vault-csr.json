@@ -4,7 +4,7 @@
     "vault.dc1.cluster.local",
     "vault-0",
     "vault-1",
-    "vault.codefiction.io",
+    "VAULT_HOST",
     "127.0.0.1"
   ],
   "key": {
