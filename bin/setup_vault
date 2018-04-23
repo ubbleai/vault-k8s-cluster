@@ -122,6 +122,13 @@ curl \
   --data "{ \"Token\": \"$ACL_AGENT_TOKEN\" }" \
   http://127.0.0.1:8500/v1/agent/token/acl_agent_token
 
+print -P "Updating anonymous token acl"
+curl \
+  --request PUT \
+  --header "X-Consul-Token: $ACL_MASTER_TOKEN" \
+  --data @acls/anonymous.json \
+  http://127.0.0.1:8500/v1/acl/create
+
 print -P "Using provided certificates (privkey.pem and fullchain.pem from let's encrypt)."
 
 kill $!
@@ -179,3 +186,12 @@ sleep 10
 vault operator unseal -tls-skip-verify $UNSEAL_KEY
 
 kill $!
+
+print -P "All vaults unsealed and ready."
+print -P "%F{yellow}VAULT_TOKEN%f=%F{magenta}$VAULT_ROOT_TOKEN%F{$color}"
+print -P "%F{yellow}UNSEAL_KEY%f=%F{magenta}$UNSEAL_KEY%F{$color}"
+
+print -P "Setting up consul dns by updating kube-dns to use consul ips"
+CONSUL_IPS=$(kubectl describe pods consul | grep "^IP" | sed -E 's/^.* ([0-9].+)$/"\1:8600"/'  | paste -sd "," -)
+cat configmaps/kube-dns.yaml | sed "s/CONSUL_IPS/$CONSUL_IPS/" > kube-dns.yaml
+kubectl apply -f kube-dns.yaml

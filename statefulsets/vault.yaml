@@ -46,7 +46,7 @@ spec:
                   key: consul-key
             - name: VAULT_LOCAL_CONFIG
               value:
-                  cluster_addr = "https://$(MY_POD_NAME):8201"
+                  cluster_addr = "https://$(MY_POD_NAME).vault.default.svc.cluster.local:8201"
                   backend "consul" {
                     address = "http://localhost:8500"
                     token = "$(VAULT_CONSUL_KEY)"
@@ -63,7 +63,7 @@ spec:
                     address = "0.0.0.0:9000"
                     tls_disable = "true"
                   }
-                  api_addr = "https://$(MY_POD_NAME):8200"
+                  api_addr = "https://$(MY_POD_NAME).vault.default.svc.cluster.local:8200"
           args:
             - "server"
           securityContext:

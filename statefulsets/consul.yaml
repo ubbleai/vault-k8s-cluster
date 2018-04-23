@@ -52,7 +52,6 @@ spec:
             - "-config-file=/consul/config/consul.json"
             - "-datacenter=dc1"
             - "-data-dir=/consul/data"
-            - "-domain=cluster.local"
             - "-encrypt=$(GOSSIP_ENCRYPTION_KEY)"
             - "-server"
             - "-ui"

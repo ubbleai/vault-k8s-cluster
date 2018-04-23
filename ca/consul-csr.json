@@ -1,6 +1,8 @@
 {
-  "CN": "server.dc1.cluster.local",
+  "CN": "server.dc1.consul",
   "hosts": [
+    "server.dc1.consul",
+    "consul.default.svc.cluster.local",
     "server.dc1.cluster.local",
     "127.0.0.1"
   ],

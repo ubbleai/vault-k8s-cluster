@@ -3,7 +3,9 @@ vault.codefiction.io
 *.pem
 *.crt
 *.csr
+*.bak
 stdout
 stderr
 test
 acl_agent_token.json
+/kube-dns.yaml
