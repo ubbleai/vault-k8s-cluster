@@ -10,49 +10,44 @@ if [[ ! -v VAULT_HOST ]]; then
 fi
 
 print -nP "%F{$color}"
-
-print -P "%F{orange}Cleaning previous certificates ...%F{$color}"
-rm *.pem *.csr *.bak tmp stdout stderr acl_agent_token.json || true
+print -nP "Cleaning previous certificates..."
+rm -rf *.pem *.csr *.bak tmp stdout stderr acl_agent_token.json 2>&1 >/dev/null || true
 mkdir -p tmp
+print -P "%F{green}done%F{$color}"
 
-print -P "%F{orange}Removing previous k8s elements if present ...%F{$color}"
-kubectl delete secret consul 2>&1 >/dev/null || true
-kubectl delete secret vaulttls 2>&1 >/dev/null || true
-kubectl delete configmap consul 2>&1 >/dev/null || true
-kubectl delete service consul 2>&1 >/dev/null || true
-kubectl delete service vault 2>&1 >/dev/null || true
-kubectl delete statefulset consul 2>&1 >/dev/null || true
+print -nP "Generating root CA for internal tls communication... "
+cfssl gencert -initca ca/ca-csr.json 2>/dev/null | cfssljson -bare ca 2>&1 >/dev/null
+print -P "%F{green}done%F{$color}"
 
-print -nP "Generate root CA"
-print -P  "%f"
-
-cfssl gencert -initca ca/ca-csr.json | cfssljson -bare ca
-
+print -nP "Generating consul certificates... "
 cfssl gencert \
   -ca=ca.pem \
   -ca-key=ca-key.pem \
   -config=ca/ca-config.json \
   -profile=default \
-  ca/consul-csr.json | cfssljson -bare consul
+  ca/consul-csr.json 2>/dev/null | cfssljson -bare consul 2>&1 >/dev/null
+print -P "%F{green}done%F{$color}"
 
+print -nP "Generating vault certificates... "
 cat ca/vault-csr.json | sed -E "s/VAULT_HOST/$VAULT_HOST/" > tmp/vault-csr.json
-
 cfssl gencert \
   -ca=ca.pem \
   -ca-key=ca-key.pem \
   -config=ca/ca-config.json \
   -profile=default \
-  tmp/vault-csr.json | cfssljson -bare vault
+  tmp/vault-csr.json 2>/dev/null | cfssljson -bare vault 2>&1 >/dev/null
+print -P "%F{green}done%F{$color}"
 
 GOSSIP_ENCRYPTION_KEY=$(consul keygen)
-
-print -P "Generated a gossip encryption key and creating consul secret. "
-print -P "Using provided certificates (privkey.pem and fullchain.pem from let's encrypt)."
+print -P  "%F{yellow}GOSSIP_ENCRYPTION_KEY%F{$color}=%F{magenta}$GOSSIP_ENCRYPTION_KEY%F{$color}"
+print -P  "Generated a gossip encryption key and creating consul secret, "
+print -nP "with consul certificates and gossip encryption key... "
 kubectl create secret generic consul \
   --from-literal="gossip-encryption-key=${GOSSIP_ENCRYPTION_KEY}" \
   --from-file=ca.pem \
   --from-file=consul.pem \
-  --from-file=consul-key.pem
+  --from-file=consul-key.pem 2>&1 >/dev/null
+print -P "%F{green}done%F{$color}"
 
 print -nP "Creating consul configmap from %F{yellow}configs/consul.json%F{$color} config file... "
 kubectl create configmap consul --from-file=configs/consul.json 2>&1 >/dev/null
@@ -70,105 +65,128 @@ print -nP "Waiting for consul cluster to elect a leader... "
 until kubectl logs consul-0 2>/dev/null | grep -q "New leader elected"
 do
   sleep 5
-done
+done 2>&1 >/dev/null
 print -P "%F{green}done.%F{$color}"
 
-kubectl port-forward consul-0 8500:8500 &
+kubectl port-forward consul-0 8500:8500 2>&1 >/dev/null &
 
 sleep 10 # For port-forwarding to setup
 
-print -P "Boostrapping consul cluster..."
-ACL_MASTER_TOKEN=$(curl --request PUT http://127.0.0.1:8500/v1/acl/bootstrap | jq -r '.ID')
+print -nP "Boostrapping consul cluster... "
+ACL_MASTER_TOKEN=$(curl -s --request PUT http://127.0.0.1:8500/v1/acl/bootstrap 2>/dev/null | jq -r '.ID')
+print -P "%F{green}done.%F{$color}"
 print -P "%F{yellow}ACL_MASTER_TOKEN%F{$color}=%F{magenta}$ACL_MASTER_TOKEN%F{$color}"
 
-ACL_AGENT_TOKEN=$(curl \
-  --request PUT \
-  --header "X-Consul-Token: $ACL_MASTER_TOKEN" \
-  --data @acls/agent.json \
-  http://127.0.0.1:8500/v1/acl/create | jq -r '.ID')
-print -P "%F{yellow}ACL_AGENT_TOKEN%F{$color}=%F{magenta}$ACL_AGENT_TOKEN%F{$color}"
-
-print -P "Setting acl_agent_token from previously created ACL_AGENT_TOKEN ..."
-curl \
-  --request PUT \
-  --header "X-Consul-Token: $ACL_MASTER_TOKEN" \
-  --data "{ \"Token\": \"$ACL_AGENT_TOKEN\" }" \
-  http://127.0.0.1:8500/v1/agent/token/acl_agent_token
-
-print -P "Creating vault consul token with %F{yellow}acls/vault.json%F{$color}."
+print -nP "Creating vault consul token with acl from %F{yellow}acls/vault.json%F{$color}... "
 VAULT_CONSUL_TOKEN=$(curl \
+  -s \
   --request PUT \
   --header "X-Consul-Token: $ACL_MASTER_TOKEN" \
   --data @acls/vault.json \
-  http://127.0.0.1:8500/v1/acl/create | jq -r '.ID')
+  http://127.0.0.1:8500/v1/acl/create 2>/dev/null | jq -r '.ID')
+print -P "%F{green}done.%F{$color}"
 print -P "%F{yellow}VAULT_CONSUL_TOKEN%F{$color}=%F{magenta}$VAULT_CONSUL_TOKEN%F{$color}"
-kubectl create secret generic vault-consul-key --from-literal="consul-key=$VAULT_CONSUL_TOKEN"
 
-kill $!
+print -nP "Creating vault-consul-key secret from previously created %F{yellow}VAULT_CONSUL_TOKEN%F{$color}... "
+kubectl create secret generic vault-consul-key --from-literal="consul-key=$VAULT_CONSUL_TOKEN" 2>&1 >/dev/null
+print -P "%F{green}done.%F{$color}"
 
-kubectl port-forward consul-1 8500:8500 &
+print -nP "Creating an agent token with acl from %F{yellow}acls/agent.json%F{$color}... "
+ACL_AGENT_TOKEN=$(curl \
+  -s \
+  --request PUT \
+  --header "X-Consul-Token: $ACL_MASTER_TOKEN" \
+  --data @acls/agent.json \
+  http://127.0.0.1:8500/v1/acl/create 2>/dev/null | jq -r '.ID')
+print -P "%F{green}done.%F{$color}"
+print -P "%F{yellow}ACL_AGENT_TOKEN%F{$color}=%F{magenta}$ACL_AGENT_TOKEN%F{$color}"
 
-sleep 10
-
-print -P "Setting acl_agent_token from previously created ACL_AGENT_TOKEN ..."
+print -P "Setting acl_agent_token from previously created %F{yellow}ACL_AGENT_TOKEN%F{$color}"
+print -nP "  %F{grey}consul-0%F{$color}... "
 curl \
+  -s \
   --request PUT \
   --header "X-Consul-Token: $ACL_MASTER_TOKEN" \
   --data "{ \"Token\": \"$ACL_AGENT_TOKEN\" }" \
-  http://127.0.0.1:8500/v1/agent/token/acl_agent_token
+  http://127.0.0.1:8500/v1/agent/token/acl_agent_token 2>&1 >/dev/null
+print -P "%F{green}done.%F{$color}"
 
 kill $!
 
-kubectl port-forward consul-2 8500:8500 &
+kubectl port-forward consul-1 8500:8500 2>&1 >/dev/null &
 
 sleep 10
 
-print -P "Setting acl_agent_token from previously created ACL_AGENT_TOKEN ..."
+print -nP "  %F{grey}consul-1%F{$color}... "
 curl \
+  -s \
   --request PUT \
   --header "X-Consul-Token: $ACL_MASTER_TOKEN" \
   --data "{ \"Token\": \"$ACL_AGENT_TOKEN\" }" \
-  http://127.0.0.1:8500/v1/agent/token/acl_agent_token
+  http://127.0.0.1:8500/v1/agent/token/acl_agent_token 2>&1 >/dev/null
+print -P "%F{green}done.%F{$color}"
 
-print -P "Updating anonymous token acl"
+kill $!
+
+kubectl port-forward consul-2 8500:8500 2>&1 >/dev/null &
+
+sleep 10
+
+print -nP "  %F{grey}consul-2%F{$color}... "
 curl \
+  -s \
+  --request PUT \
+  --header "X-Consul-Token: $ACL_MASTER_TOKEN" \
+  --data "{ \"Token\": \"$ACL_AGENT_TOKEN\" }" \
+  http://127.0.0.1:8500/v1/agent/token/acl_agent_token 2>&1 >/dev/null
+print -P "%F{green}done.%F{$color}"
+
+print -nP "Updating anonymous token acl from %F{yellow}acls/anonymous.json%F{$color}... "
+curl \
+  -s \
   --request PUT \
   --header "X-Consul-Token: $ACL_MASTER_TOKEN" \
   --data @acls/anonymous.json \
-  http://127.0.0.1:8500/v1/acl/create
-
-print -P "Using provided certificates (privkey.pem and fullchain.pem from let's encrypt)."
+  http://127.0.0.1:8500/v1/acl/create 2>&1 >/dev/null
+print -P "%F{green}done.%F{$color}"
 
 kill $!
 
+print -nP "Creating vault secret from generated vault generated certificates... "
 cp vault.pem vault.pem.bak
 cat vault.pem.bak ca.pem > vault.pem
 kubectl create secret generic vault \
   --from-file=vault.pem \
-  --from-file=vault-key.pem
+  --from-file=vault-key.pem 2>&1 >/dev/null
+print -P "%F{green}done.%F{$color}"
 
-print -P "Using ACL_AGENT_TOKEN to create consul-agent-token secret."
+print -nP "Using %F{yellow}ACL_AGENT_TOKEN%F{$color} to create consul-agent-token secret... "
 echo "{ \"acl_agent_token\": \"$ACL_AGENT_TOKEN\" }" > acl_agent_token.json
-kubectl create secret generic consul-agent-token --from-file=acl_agent_token.json
+kubectl create secret generic consul-agent-token --from-file=acl_agent_token.json 2>&1 >/dev/null
+print -P "%F{green}done.%F{$color}"
 
 print -nP "Creating vault service from %F{yellow}services/vault.yaml%F{$color} file... "
 kubectl apply -f services/vault.yaml 2>&1 >/dev/null
 print -P "%F{green}done.%F{$color}"
 
-kubectl apply -f statefulsets/vault.yaml
+print -nP "Creating vault statefulset from %F{yellow}statefulsets/vault.yaml%F{$color} config file... "
+kubectl apply -f statefulsets/vault.yaml 2>&1 >/dev/null
+print -P "%F{green}done.%F{$color}"
 
 print -nP "Waiting for first vault node to be ready... "
 until kubectl logs vault-0 vault 2>/dev/null | grep -q "Log data will stream in below"
 do
   sleep 5
-done
+done 2>&1 >/dev/null
 print -P "%F{green}done.%F{$color}"
 
-kubectl port-forward vault-0 8200:8200 &
+kubectl port-forward vault-0 8200:8200 2>&1 >/dev/null &
 
 sleep 10
 
+print -nP "Initializing first vault node and retrieving unseal key and initial root token... "
 vault operator init -key-shares=1 -key-threshold=1 -tls-skip-verify 1>stdout 2>stderr
+print -P "%F{green}done.%F{$color}"
 
 UNSEAL_KEY=$(cat stdout | grep "Unseal Key" | sed -E 's/Unseal Key 1: (.*)/\1/')
 
@@ -176,7 +194,9 @@ VAULT_ROOT_TOKEN=$(cat stdout | grep "^Initial Root Token" | sed -E 's/Initial R
 
 sleep 5
 
-vault operator unseal -tls-skip-verify $UNSEAL_KEY
+print -nP "Unsealing first vault... "
+vault operator unseal -tls-skip-verify $UNSEAL_KEY 2>&1 >/dev/null
+print -P "%F{green}done.%F{$color}"
 
 kill $!
 
@@ -184,14 +204,16 @@ print -nP "Waiting for second vault node to be ready... "
 until kubectl logs vault-1 vault 2>/dev/null | grep -q "Log data will stream in below"
 do
   sleep 5
-done
+done 2>&1 >/dev/null
 print -P "%F{green}done.%F{$color}"
 
-kubectl port-forward vault-1 8200:8200 &
+kubectl port-forward vault-1 8200:8200 2>&1 >/dev/null &
 
 sleep 10
 
-vault operator unseal -tls-skip-verify $UNSEAL_KEY
+print -nP "Unsealing second vault... "
+vault operator unseal -tls-skip-verify $UNSEAL_KEY 2>&1 >/dev/null
+print -P "%F{green}done.%F{$color}"
 
 kill $!
 
@@ -199,16 +221,42 @@ print -P "All vaults unsealed and ready."
 print -P "%F{yellow}VAULT_TOKEN%f=%F{magenta}$VAULT_ROOT_TOKEN%F{$color}"
 print -P "%F{yellow}UNSEAL_KEY%f=%F{magenta}$UNSEAL_KEY%F{$color}"
 
-print -P "Setting up consul dns by updating kube-dns to use consul ips"
+print -nP "Setting up consul dns by updating kube-dns to use consul ips... "
 CONSUL_IPS=$(kubectl describe pods consul | grep "^IP" | sed -E 's/^.* ([0-9].+)$/"\1:8600"/'  | paste -sd "," -)
-cat configmaps/kube-dns.yaml | sed "s/CONSUL_IPS/$CONSUL_IPS/" > kube-dns.yaml
-kubectl apply -f kube-dns.yaml
+cat configmaps/kube-dns.yaml | sed "s/CONSUL_IPS/$CONSUL_IPS/" > tmp/kube-dns.yaml
+kubectl apply -f tmp/kube-dns.yaml
+print -P "%F{green}done.%F{$color}"
 
 print -P "Creating nginx load balancer with ssl termination for external host %F{yellow}$VAULT_HOST%F{$color}"
+print -P "and public certificates at %F{yellow}$VAULT_HOST/fullchain.pem%F{$color} and %F{yellow}$VAULT_HOST/privkey.pem%F{$color}... "
 cat configs/nginx.conf | sed -E "s/VAULT_HOST/$VAULT_HOST/" > tmp/nginx.conf
-kubectl create configmap nginx-config --from-file tmp/nginx.conf
+kubectl create configmap nginx-config --from-file tmp/nginx.conf 2>&1 >/dev/null
 kubectl create secret generic vault-certificates \
   --from-file $VAULT_HOST/privkey.pem \
-  --from-file $VAULT_HOST/fullchain.pem
-kubectl apply -f deployments/nginx.yaml
-kubectl apply -f services/nginx.yaml
+  --from-file $VAULT_HOST/fullchain.pem 2>&1 >/dev/null
+kubectl apply -f deployments/nginx.yaml 2>&1 >/dev/null
+kubectl apply -f services/nginx.yaml 2>&1 >/dev/null
+print -P "%F{green}done.%F{$color}"
+
+print -P "Waiting a few seconds for the load balancer to obtain an external host... "
+sleep 15
+ELB_HOSTNAME=$(kubectl get svc -o json nginx | jq -r '.status.loadBalancer.ingress[0].hostname')
+print -P "%F{yellow}ELB_HOSTNAME%F{$color}=%F{magenta}$ELB_HOSTNAME%F{$color}"
+print
+print -P "Summary:"
+print -P " - 3 pods HA consul cluster"
+print -P " - 2 pods HA vault cluster"
+print -P " - 2 pods nginx for external load balancing and ssl termination"
+print -P " - root ca and certificates for internal communication between pods"
+print -P " - public certificates for accessing the vault cluster through nginx"
+print
+print -P "You should now point $VAULT_HOST to the nginx elb: $ELB_HOSTNAME."
+print
+print -P "The following data should be saved somewhere safe:"
+print -P "%F{yellow}ACL_MASTER_TOKEN%F{$color}=%F{magenta}$ACL_MASTER_TOKEN%F{$color}"
+print -P "%F{yellow}ACL_AGENT_TOKEN%F{$color}=%F{magenta}$ACL_AGENT_TOKEN%F{$color}"
+print -P "%F{yellow}VAULT_CONSUL_TOKEN%F{$color}=%F{magenta}$VAULT_CONSUL_TOKEN%F{$color}"
+print -P "%F{yellow}GOSSIP_ENCRYPTION_KEY%F{$color}=%F{magenta}$GOSSIP_ENCRYPTION_KEY%F{$color}"
+print -P "%F{yellow}VAULT_TOKEN%f=%F{magenta}$VAULT_ROOT_TOKEN%F{$color}"
+print -P "%F{yellow}UNSEAL_KEY%f=%F{magenta}$UNSEAL_KEY%F{$color}"
+print -P "%F{yellow}ELB_HOSTNAME%F{$color}=%F{magenta}$ELB_HOSTNAME%F{$color}"
