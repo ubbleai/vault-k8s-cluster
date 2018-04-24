@@ -10,3 +10,4 @@ test
 acl_agent_token.json
 /kube-dns.yaml
 /tmp
+.envrc
