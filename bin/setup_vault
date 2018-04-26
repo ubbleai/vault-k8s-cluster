@@ -38,6 +38,12 @@ cfssl gencert \
   tmp/vault-csr.json 2>/dev/null | cfssljson -bare vault 2>&1 >/dev/null
 print -P "%F{green}done%F{$color}"
 
+CLUSTER_NAME=$(kubectl config current-context)
+
+kubectl create configmap cluster-config \
+  --from-literal=CLUSTER_NAME=$CLUSTER_NAME \
+  --from-literal=VAULT_ADDR=https://$VAULT_HOST
+
 GOSSIP_ENCRYPTION_KEY=$(consul keygen)
 print -P  "%F{yellow}GOSSIP_ENCRYPTION_KEY%F{$color}=%F{magenta}$GOSSIP_ENCRYPTION_KEY%F{$color}"
 print -P  "Generated a gossip encryption key and creating consul secret, "
@@ -227,6 +233,23 @@ cat configmaps/kube-dns.yaml | sed "s/CONSUL_IPS/$CONSUL_IPS/" > tmp/kube-dns.ya
 kubectl apply -f tmp/kube-dns.yaml
 print -P "%F{green}done.%F{$color}"
 
+print -nP "Creating service accounts for letsencrypt-vault-manager and nginx... "
+kubectl -n default create serviceaccount vault-nginx
+kubectl -n default create serviceaccount letsencrypt-vault-manager
+print -P "%F{green}done.%F{$color}"
+
+./toolbox/bin/vault-k8s-config --tls-skip-verify
+
+print -nP "Creating letsencrypt-vault-manager role... "
+vault write -tls-skip-verify sys/policy/certs_all_access policy=@policies/certs_all_access.hcl
+vault write -tls-skip-verify auth/kubernetes/$CLUSTER_NAME/letsencrypt-vault-manager \
+  bound_service_account_names=letsencrypt-vault-manager \
+  bound_service_account_namespaces=default \
+  policies=certs_all_access \
+  ttl=30m
+print -P "%F{green}done.%F{$color}"
+
+
 print -P "Creating nginx load balancer with ssl termination for external host %F{yellow}$VAULT_HOST%F{$color}"
 print -P "and public certificates at %F{yellow}$VAULT_HOST/fullchain.pem%F{$color} and %F{yellow}$VAULT_HOST/privkey.pem%F{$color}... "
 cat configs/nginx.conf | sed -E "s/VAULT_HOST/$VAULT_HOST/" > tmp/nginx.conf
@@ -236,6 +259,12 @@ kubectl create secret generic vault-certificates \
   --from-file $VAULT_HOST/fullchain.pem 2>&1 >/dev/null
 kubectl apply -f deployments/nginx.yaml 2>&1 >/dev/null
 kubectl apply -f services/nginx.yaml 2>&1 >/dev/null
+print -P "%F{green}done.%F{$color}"
+
+print -P "Creating letsencrypt-vault-manager for handling ssl certificate "
+print -nP "creation and renewal... "
+kubectl apply -f deployments/letsencrypt-vault-manager.yaml
+kubectl apply -f services/letsencrypt-vault-manager.yaml
 print -P "%F{green}done.%F{$color}"
 
 print -P "Waiting a few seconds for the load balancer to obtain an external host... "

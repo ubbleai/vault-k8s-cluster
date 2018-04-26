@@ -1,14 +1,18 @@
-apiVersion: v1
-kind: ReplicationController
+apiVersion: apps/v1
+kind: Deployment
 metadata:
   name: nginx
 spec:
   replicas: 2
+  selector:
+    matchLabels:
+      app: nginx
   template:
     metadata:
       labels:
         app: nginx
     spec:
+      serviceAccountName: vault-nginx
       affinity:
         podAntiAffinity:
           requiredDuringSchedulingIgnoredDuringExecution:
@@ -24,15 +28,28 @@ spec:
         fsGroup: 1000
       containers:
         - name: nginx
-          image: nginx:1.13
+          image: gobadiah/vault-k8s-consul-template-nginx:0.5
           ports:
             - containerPort: 443
               name: ssl
+          env:
+            - name: VAULT_ROLE
+              value: nginx-vault
+            - name: VAULT_ADDR
+              valueFrom:
+                configMapKeyRef:
+                  name: cluster-config
+                  key: VAULT_ADDR
+            - name: CLUSTER_NAME
+              valueFrom:
+                configMapKeyRef:
+                  name: cluster-config
+                  key: CLUSTER_NAME
           volumeMounts:
-            - name: tls
-              mountPath: /etc/vault-tls
             - name: config
               mountPath: /etc/nginx/conf.d
+            - name: consul-template
+              mountPath: /consul-template
         - name: dnsmasq
           image: "janeczku/go-dnsmasq:release-1.0.5"
           args:
@@ -43,9 +60,9 @@ spec:
             - --hostsfile=/etc/hosts
             - --verbose
       volumes:
-        - name: tls
-          secret:
-            secretName: vault-certificates
         - name: config
           configMap:
             name: nginx-config
+        - name: consul-template
+          configMap:
+            name: consul-template-config
