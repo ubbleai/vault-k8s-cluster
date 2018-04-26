@@ -4,6 +4,9 @@ metadata:
   name: letsencrypt-vault-manager
 spec:
   replicas: 1
+  selector:
+    matchLabels:
+      app: letsencrypt-vault-manager
   template:
     metadata:
       labels:
@@ -25,7 +28,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: letsencrypt-vault-manager
-          image: gobadiah/letsencrypt-vault-manager:0.10
+          image: gobadiah/letsencrypt-vault-manager:0.12
           ports:
             - containerPort: 80
               name: http

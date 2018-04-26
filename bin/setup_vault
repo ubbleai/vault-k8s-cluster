@@ -234,25 +234,33 @@ kubectl apply -f tmp/kube-dns.yaml
 print -P "%F{green}done.%F{$color}"
 
 print -nP "Creating service accounts for letsencrypt-vault-manager and nginx... "
-kubectl -n default create serviceaccount vault-nginx
-kubectl -n default create serviceaccount letsencrypt-vault-manager
+kubectl get sa | grep -q "^vault-nginx "
+if [ $? -ne 0 ]; then
+  kubectl -n default create serviceaccount vault-nginx
+fi
+kubectl get sa | grep -q "^letsencrypt-vault-manager "
+if [ $? -ne 0 ]; then
+  kubectl -n default create serviceaccount letsencrypt-vault-manager
+fi
 print -P "%F{green}done.%F{$color}"
 
 ./toolbox/bin/vault-k8s-config --tls-skip-verify
 
 print -nP "Creating letsencrypt-vault-manager role... "
 vault write -tls-skip-verify sys/policy/certs_all_access policy=@policies/certs_all_access.hcl
-vault write -tls-skip-verify auth/kubernetes/$CLUSTER_NAME/letsencrypt-vault-manager \
+vault write -tls-skip-verify sys/policy/certbot_readonly policy=@policies/certbot_readonly.hcl
+vault write -tls-skip-verify auth/kubernetes/$CLUSTER_NAME/role/letsencrypt-vault-manager \
   bound_service_account_names=letsencrypt-vault-manager \
   bound_service_account_namespaces=default \
-  policies=certs_all_access \
+  policies=certs_all_access,certbot_readonly \
   ttl=30m
 print -P "%F{green}done.%F{$color}"
-
 
 print -P "Creating nginx load balancer with ssl termination for external host %F{yellow}$VAULT_HOST%F{$color}"
 print -P "and public certificates at %F{yellow}$VAULT_HOST/fullchain.pem%F{$color} and %F{yellow}$VAULT_HOST/privkey.pem%F{$color}... "
 cat configs/nginx.conf | sed -E "s/VAULT_HOST/$VAULT_HOST/" > tmp/nginx.conf
+cat configs/consul-template.hcl | sed -E "s/VAULT_HOST/$VAULT_HOST/" > tmp/config.hcl
+kubectl create configmap consul-template-config --from-file tmp/config.hcl
 kubectl create configmap nginx-config --from-file tmp/nginx.conf 2>&1 >/dev/null
 kubectl create secret generic vault-certificates \
   --from-file $VAULT_HOST/privkey.pem \
