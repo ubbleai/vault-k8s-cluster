@@ -9,6 +9,8 @@ if [[ ! -v VAULT_HOST ]]; then
   exit 1
 fi
 
+unset VAULT_ADDR
+
 print -nP "%F{$color}"
 print -nP "Cleaning previous certificates..."
 rm -rf *.pem *.csr *.bak tmp stdout stderr acl_agent_token.json 2>&1 >/dev/null || true
@@ -197,6 +199,8 @@ print -P "%F{green}done.%F{$color}"
 UNSEAL_KEY=$(cat stdout | grep "Unseal Key" | sed -E 's/Unseal Key 1: (.*)/\1/')
 
 VAULT_ROOT_TOKEN=$(cat stdout | grep "^Initial Root Token" | sed -E 's/Initial Root Token: (.*)/\1/')
+export VAULT_TOKEN=$VAULT_ROOT_TOKEN
+
 
 sleep 5
 
@@ -234,27 +238,44 @@ kubectl apply -f tmp/kube-dns.yaml
 print -P "%F{green}done.%F{$color}"
 
 print -nP "Creating service accounts for letsencrypt-vault-manager and nginx... "
-kubectl get sa | grep -q "^vault-nginx "
-if [ $? -ne 0 ]; then
-  kubectl -n default create serviceaccount vault-nginx
-fi
-kubectl get sa | grep -q "^letsencrypt-vault-manager "
-if [ $? -ne 0 ]; then
-  kubectl -n default create serviceaccount letsencrypt-vault-manager
-fi
+kubectl -n default create serviceaccount vault-nginx
+kubectl -n default create serviceaccount letsencrypt-vault-manager
 print -P "%F{green}done.%F{$color}"
 
-./toolbox/bin/vault-k8s-config --tls-skip-verify
+kubectl port-forward vault-0 8200:8200 2>&1 >/dev/null &
+
+sleep 10
+
+./toolbox/bin/vault-k8s-config -tls-skip-verify
+./toolbox/bin/vault-aws-config -tls-skip-verify -path
+
+VAULT_USER="vault-vault.k8s.local"
+
+sed -E "s/HOSTED_ZONE_ID/${HOSTED_ZONE_ID[1,99]}/" \
+  aws-policies/letsencrypt-vault-manager.json > /tmp/letsencrypt-vault-manager.json
+ARN=$(aws iam create-policy --policy-name "letsencrypt-vault-manager-vault.k8s.local" \
+  --policy-document file:///tmp/letsencrypt-vault-manager.json |
+  jq -r '.Policy.Arn')
+aws iam attach-user-policy --user-name "$VAULT_USER" \
+  --policy-arn $ARN
+vault write -tls-skip-verify aws/$CLUSTER_NAME/roles/letsencrypt-vault-manager \
+  policy=@/tmp/letsencrypt-vault-manager.json
 
 print -nP "Creating letsencrypt-vault-manager role... "
 vault write -tls-skip-verify sys/policy/certs_all_access policy=@policies/certs_all_access.hcl
 vault write -tls-skip-verify sys/policy/certbot_readonly policy=@policies/certbot_readonly.hcl
+sed -E "s/CLUSTER_NAME/$CLUSTER_NAME/" \
+  policies/aws-letsencrypt-vault-manager.hcl > /tmp/aws-letsencrypt-vault-manager.hcl
+vault write -tls-skip-verify sys/policy/aws-letsencrypt-vault-manager \
+  policy=@/tmp/aws-letsencrypt-vault-manager.hcl
 vault write -tls-skip-verify auth/kubernetes/$CLUSTER_NAME/role/letsencrypt-vault-manager \
   bound_service_account_names=letsencrypt-vault-manager \
   bound_service_account_namespaces=default \
-  policies=certs_all_access,certbot_readonly \
+  policies=certs_all_access,certbot_readonly,aws-letsencrypt-vault-manager \
   ttl=30m
 print -P "%F{green}done.%F{$color}"
+
+kill $!
 
 print -P "Creating nginx load balancer with ssl termination for external host %F{yellow}$VAULT_HOST%F{$color}"
 print -P "and public certificates at %F{yellow}$VAULT_HOST/fullchain.pem%F{$color} and %F{yellow}$VAULT_HOST/privkey.pem%F{$color}... "
