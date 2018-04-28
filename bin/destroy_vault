@@ -1,0 +1,20 @@
+#!/bin/zsh
+
+# Cluster may be destroy here
+
+VAULT_USER="vault-vault.k8s.local"
+
+aws iam list-users | grep -q "\"$VAULT_USER\"" || exit 0
+
+aws iam list-attached-user-policies --user-name vault-vault.k8s.local | jq -r '.AttachedPolicies[].PolicyArn' |
+  while read arn
+  do
+    aws iam detach-user-policy --user-name $VAULT_USER --policy-arn $arn
+    aws iam delete-policy --policy-arn $arn
+  done
+
+aws iam list-access-keys --user-name $VAULT_USER |
+  jq -r '.AccessKeyMetadata[].AccessKeyId' |
+  xargs -I {} aws iam delete-access-key --access-key-id {} --user-name $VAULT_USER
+
+aws iam delete-user --user-name $VAULT_USER
