@@ -34,12 +34,7 @@ spec:
               name: ssl
           env:
             - name: VAULT_ROLE
-              value: nginx-vault
-            - name: VAULT_ADDR
-              valueFrom:
-                configMapKeyRef:
-                  name: cluster-config
-                  key: VAULT_ADDR
+              value: vault-nginx
             - name: CLUSTER_NAME
               valueFrom:
                 configMapKeyRef:

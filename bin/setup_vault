@@ -2,6 +2,16 @@
 
 set -e
 
+email=$(git config user.email)
+
+if [[ "$email" == "" ]]; then
+  print -nP "%F{red}We need an email for certifying domains through let'sencrypt "
+  print  -P " and for that we use ... git email, which is empty."
+  print  -P "Please configure it using the following command:"
+  print  -p "%F{blue}git config --global user.email my-email@address.io%f"
+  exit 1
+fi
+
 color=blue
 
 if [[ ! -v VAULT_HOST ]]; then
@@ -78,7 +88,7 @@ print -P "%F{green}done.%F{$color}"
 
 kubectl port-forward consul-0 8500:8500 2>&1 >/dev/null &
 
-sleep 10 # For port-forwarding to setup
+sleep 30 # For port-forwarding to setup
 
 print -nP "Boostrapping consul cluster... "
 ACL_MASTER_TOKEN=$(curl -s --request PUT http://127.0.0.1:8500/v1/acl/bootstrap 2>/dev/null | jq -r '.ID')
@@ -123,7 +133,7 @@ kill $!
 
 kubectl port-forward consul-1 8500:8500 2>&1 >/dev/null &
 
-sleep 10
+sleep 30
 
 print -nP "  %F{grey}consul-1%F{$color}... "
 curl \
@@ -138,7 +148,7 @@ kill $!
 
 kubectl port-forward consul-2 8500:8500 2>&1 >/dev/null &
 
-sleep 10
+sleep 30
 
 print -nP "  %F{grey}consul-2%F{$color}... "
 curl \
@@ -146,7 +156,7 @@ curl \
   --request PUT \
   --header "X-Consul-Token: $ACL_MASTER_TOKEN" \
   --data "{ \"Token\": \"$ACL_AGENT_TOKEN\" }" \
-  http://127.0.0.1:8500/v1/agent/token/acl_agent_token 2>&1 >/dev/null
+  http://127.0.0.1:8500/v1/agent/token/acl_agent_token
 print -P "%F{green}done.%F{$color}"
 
 print -nP "Updating anonymous token acl from %F{yellow}acls/anonymous.json%F{$color}... "
@@ -190,7 +200,7 @@ print -P "%F{green}done.%F{$color}"
 
 kubectl port-forward vault-0 8200:8200 2>&1 >/dev/null &
 
-sleep 10
+sleep 30
 
 print -nP "Initializing first vault node and retrieving unseal key and initial root token... "
 vault operator init -key-shares=1 -key-threshold=1 -tls-skip-verify 1>stdout 2>stderr
@@ -219,7 +229,7 @@ print -P "%F{green}done.%F{$color}"
 
 kubectl port-forward vault-1 8200:8200 2>&1 >/dev/null &
 
-sleep 10
+sleep 30
 
 print -nP "Unsealing second vault... "
 vault operator unseal -tls-skip-verify $UNSEAL_KEY 2>&1 >/dev/null
@@ -244,14 +254,19 @@ print -P "%F{green}done.%F{$color}"
 
 kubectl port-forward vault-0 8200:8200 2>&1 >/dev/null &
 
-sleep 10
+sleep 30
 
+print -nP "Configuring k8s auth backend in vault for this cluster... "
 ./toolbox/bin/vault-k8s-config -tls-skip-verify
+print -P "%F{green}done.%F{$color}"
+
+print -nP "Configuring secret secret backend in vault for this cluster... "
 ./toolbox/bin/vault-aws-config -tls-skip-verify -path
+print -P "%F{green}done.%F{$color}"
 
 VAULT_USER="vault-vault.k8s.local"
 
-sed -E "s/HOSTED_ZONE_ID/${HOSTED_ZONE_ID[1,99]}/" \
+sed -E "s#HOSTED_ZONE_ID#${HOSTED_ZONE_ID[1,99]}#" \
   aws-policies/letsencrypt-vault-manager.json > /tmp/letsencrypt-vault-manager.json
 ARN=$(aws iam create-policy --policy-name "letsencrypt-vault-manager-vault.k8s.local" \
   --policy-document file:///tmp/letsencrypt-vault-manager.json |
@@ -277,29 +292,58 @@ print -P "%F{green}done.%F{$color}"
 
 kill $!
 
-print -P "Creating nginx load balancer with ssl termination for external host %F{yellow}$VAULT_HOST%F{$color}"
-print -P "and public certificates at %F{yellow}$VAULT_HOST/fullchain.pem%F{$color} and %F{yellow}$VAULT_HOST/privkey.pem%F{$color}... "
-cat configs/nginx.conf | sed -E "s/VAULT_HOST/$VAULT_HOST/" > tmp/nginx.conf
-cat configs/consul-template.hcl | sed -E "s/VAULT_HOST/$VAULT_HOST/" > tmp/config.hcl
-kubectl create configmap consul-template-config --from-file tmp/config.hcl
-kubectl create configmap nginx-config --from-file tmp/nginx.conf 2>&1 >/dev/null
-kubectl create secret generic vault-certificates \
-  --from-file $VAULT_HOST/privkey.pem \
-  --from-file $VAULT_HOST/fullchain.pem 2>&1 >/dev/null
-kubectl apply -f deployments/nginx.yaml 2>&1 >/dev/null
-kubectl apply -f services/nginx.yaml 2>&1 >/dev/null
-print -P "%F{green}done.%F{$color}"
-
 print -P "Creating letsencrypt-vault-manager for handling ssl certificate "
 print -nP "creation and renewal... "
 kubectl apply -f deployments/letsencrypt-vault-manager.yaml
 kubectl apply -f services/letsencrypt-vault-manager.yaml
 print -P "%F{green}done.%F{$color}"
 
+print -nP "Waiting for letsencrypt-vault-manager to be running..."
+until kubectl get pods | grep "^letsencrypt" | grep -q Running
+do
+  sleep 5
+done
+sleep 5
+print -P "%F{green}done.%F{$color}"
+
+host_for_certification=$(kubectl get svc -o json letsencrypt-vault-manager |
+  jq -r '.status.loadBalancer.ingress[0].hostname')
+
+kubectl port-forward vault-0 8200:8200 2>&1 >/dev/null &
+
+sleep 30
+
+vault write -tls-skip-verify secret/certbot \
+  email=$email \
+  host=$host_for_certification \
+  hosted_zone_id=$HOSTED_ZONE_ID
+
+print -nP "Certifying domain %F{yellow}$VAULT_HOST%F{$color} using let's encrypt ..."
+kubectl get pods | grep "^letsencrypt" | sed -E 's/^([^ ]+).*/\1/' | xargs -I {} kubectl exec -t {} certify $VAULT_HOST
+print -P "%F{green}done.%F{$color}"
+
+print -P "Creating nginx load balancer with ssl termination for external host %F{yellow}$VAULT_HOST%F{$color}"
+vault write -tls-skip-verify sys/policy/certs_readonly policy=@policies/certs_readonly.hcl
+vault write -tls-skip-verify auth/kubernetes/$CLUSTER_NAME/role/vault-nginx \
+  bound_service_account_names=vault-nginx \
+  bound_service_account_namespaces=default \
+  policies=certs_readonly \
+  ttl=30m
+cat configs/nginx.conf | sed -E "s/VAULT_HOST/$VAULT_HOST/" > tmp/nginx.conf
+cat configs/consul-template.hcl | sed -E "s/VAULT_HOST/$VAULT_HOST/" > tmp/config.hcl
+kubectl create configmap consul-template-config --from-file tmp/config.hcl
+kubectl create configmap nginx-config --from-file tmp/nginx.conf 2>&1 >/dev/null
+kubectl apply -f deployments/nginx.yaml 2>&1 >/dev/null
+kubectl apply -f services/nginx.yaml 2>&1 >/dev/null
+print -P "%F{green}done.%F{$color}"
+
 print -P "Waiting a few seconds for the load balancer to obtain an external host... "
 sleep 15
 ELB_HOSTNAME=$(kubectl get svc -o json nginx | jq -r '.status.loadBalancer.ingress[0].hostname')
 print -P "%F{yellow}ELB_HOSTNAME%F{$color}=%F{magenta}$ELB_HOSTNAME%F{$color}"
+print -nP "Redirecting $VAULT_HOST to $ELB_HOSTNAME..."
+redirect_subdomain $VAULT_HOST. $ELB_HOSTNAME.
+print -P "%F{green}done.%F{$color}"
 print
 print -P "Summary:"
 print -P " - 3 pods HA consul cluster"
