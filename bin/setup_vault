@@ -2,6 +2,10 @@
 
 set -e
 
+SCRIPTPATH="$( cd "$(dirname "$0")" ; pwd -P )"
+
+pushd $SCRIPTPATH/..
+
 email=$(git config user.email)
 
 if [[ "$email" == "" ]]; then
@@ -362,3 +366,5 @@ print -P "%F{yellow}GOSSIP_ENCRYPTION_KEY%F{$color}=%F{magenta}$GOSSIP_ENCRYPTIO
 print -P "%F{yellow}VAULT_TOKEN%f=%F{magenta}$VAULT_ROOT_TOKEN%F{$color}"
 print -P "%F{yellow}UNSEAL_KEY%f=%F{magenta}$UNSEAL_KEY%F{$color}"
 print -P "%F{yellow}ELB_HOSTNAME%F{$color}=%F{magenta}$ELB_HOSTNAME%F{$color}"
+
+popd
