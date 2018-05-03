@@ -28,7 +28,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: nginx
-          image: gobadiah/vault-k8s-consul-template-nginx:0.5
+          image: gobadiah/vault-k8s-consul-template-nginx:0.6
           ports:
             - containerPort: 443
               name: ssl

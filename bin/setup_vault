@@ -18,10 +18,7 @@ fi
 
 color=blue
 
-if [[ ! -v VAULT_HOST ]]; then
-  echo "VAULT_HOST needs to be set."
-  exit 1
-fi
+export VAULT_HOST=$(echo $VAULT_ADDR | sed -E 's#https?://([0-9\.a-z]+).*#\1#')
 
 unset VAULT_ADDR
 
@@ -92,7 +89,7 @@ print -P "%F{green}done.%F{$color}"
 
 kubectl port-forward consul-0 8500:8500 2>&1 >/dev/null &
 
-sleep 10 # For port-forwarding to setup
+sleep 20 # For port-forwarding to setup
 
 print -nP "Boostrapping consul cluster... "
 ACL_MASTER_TOKEN=$(curl -s --request PUT http://127.0.0.1:8500/v1/acl/bootstrap 2>/dev/null | jq -r '.ID')
@@ -137,7 +134,7 @@ kill $!
 
 kubectl port-forward consul-1 8500:8500 2>&1 >/dev/null &
 
-sleep 10
+sleep 20
 
 print -nP "  %F{grey}consul-1%F{$color}... "
 curl \
@@ -150,9 +147,13 @@ print -P "%F{green}done.%F{$color}"
 
 kill $!
 
+echo e
+
 kubectl port-forward consul-2 8500:8500 2>&1 >/dev/null &
 
-sleep 10
+echo d
+
+sleep 20
 
 print -nP "  %F{grey}consul-2%F{$color}... "
 curl \
@@ -172,7 +173,13 @@ curl \
   http://127.0.0.1:8500/v1/acl/create 2>&1 >/dev/null
 print -P "%F{green}done.%F{$color}"
 
+echo f
+
 kill $!
+
+ps aux | grep port-forward
+
+echo g
 
 print -nP "Creating vault secret from generated vault generated certificates... "
 cp vault.pem vault.pem.bak
@@ -202,9 +209,17 @@ do
 done 2>&1 >/dev/null
 print -P "%F{green}done.%F{$color}"
 
+echo c
+
+ps aux | grep port-forward
+
 kubectl port-forward vault-0 8200:8200 2>&1 >/dev/null &
 
-sleep 10
+echo b
+
+ps aux | grep port-forward
+
+sleep 20
 
 print -nP "Initializing first vault node and retrieving unseal key and initial root token... "
 vault operator init -key-shares=1 -key-threshold=1 -tls-skip-verify 1>stdout 2>stderr
@@ -233,7 +248,7 @@ print -P "%F{green}done.%F{$color}"
 
 kubectl port-forward vault-1 8200:8200 2>&1 >/dev/null &
 
-sleep 10
+sleep 20
 
 print -nP "Unsealing second vault... "
 vault operator unseal -tls-skip-verify $UNSEAL_KEY 2>&1 >/dev/null
@@ -258,7 +273,7 @@ print -P "%F{green}done.%F{$color}"
 
 kubectl port-forward vault-0 8200:8200 2>&1 >/dev/null &
 
-sleep 10
+sleep 20
 
 print -nP "Configuring k8s auth backend in vault for this cluster... "
 vault-k8s-config -tls-skip-verify
@@ -277,7 +292,7 @@ ARN=$(aws iam create-policy --policy-name "letsencrypt-vault-manager-vault.k8s.l
   jq -r '.Policy.Arn')
 aws iam attach-user-policy --user-name "$VAULT_USER" \
   --policy-arn $ARN
-vault write -tls-skip-verify aws/$CLUSTER_NAME/roles/letsencrypt-vault-manager \
+vault write -tls-skip-verify $VAULT_AWS_PATH/roles/letsencrypt-vault-manager \
   policy=@/tmp/letsencrypt-vault-manager.json
 
 print -nP "Creating letsencrypt-vault-manager role... "
@@ -287,7 +302,7 @@ sed -E "s/CLUSTER_NAME/$CLUSTER_NAME/" \
   policies/aws-letsencrypt-vault-manager.hcl > /tmp/aws-letsencrypt-vault-manager.hcl
 vault write -tls-skip-verify sys/policy/aws-letsencrypt-vault-manager \
   policy=@/tmp/aws-letsencrypt-vault-manager.hcl
-vault write -tls-skip-verify auth/kubernetes/$CLUSTER_NAME/role/letsencrypt-vault-manager \
+vault write -tls-skip-verify auth/$VAULT_K8S_PATH/role/letsencrypt-vault-manager \
   bound_service_account_names=letsencrypt-vault-manager \
   bound_service_account_namespaces=default \
   policies=certs_all_access,certbot_readonly,aws-letsencrypt-vault-manager \
@@ -315,7 +330,7 @@ host_for_certification=$(kubectl get svc -o json letsencrypt-vault-manager |
 
 kubectl port-forward vault-0 8200:8200 2>&1 >/dev/null &
 
-sleep 10
+sleep 20
 
 vault write -tls-skip-verify secret/certbot \
   email=$email \
@@ -328,7 +343,7 @@ print -P "%F{green}done.%F{$color}"
 
 print -P "Creating nginx load balancer with ssl termination for external host %F{yellow}$VAULT_HOST%F{$color}"
 vault write -tls-skip-verify sys/policy/certs_readonly policy=@policies/certs_readonly.hcl
-vault write -tls-skip-verify auth/kubernetes/$CLUSTER_NAME/role/vault-nginx \
+vault write -tls-skip-verify auth/$VAULT_K8S_PATH/role/vault-nginx \
   bound_service_account_names=vault-nginx \
   bound_service_account_namespaces=default \
   policies=certs_readonly \
