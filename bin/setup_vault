@@ -147,11 +147,7 @@ print -P "%F{green}done.%F{$color}"
 
 kill $!
 
-echo e
-
 kubectl port-forward consul-2 8500:8500 2>&1 >/dev/null &
-
-echo d
 
 sleep 20
 
@@ -173,13 +169,9 @@ curl \
   http://127.0.0.1:8500/v1/acl/create 2>&1 >/dev/null
 print -P "%F{green}done.%F{$color}"
 
-echo f
-
 kill $!
 
 ps aux | grep port-forward
-
-echo g
 
 print -nP "Creating vault secret from generated vault generated certificates... "
 cp vault.pem vault.pem.bak
@@ -209,13 +201,9 @@ do
 done 2>&1 >/dev/null
 print -P "%F{green}done.%F{$color}"
 
-echo c
-
 ps aux | grep port-forward
 
 kubectl port-forward vault-0 8200:8200 2>&1 >/dev/null &
-
-echo b
 
 ps aux | grep port-forward
 
