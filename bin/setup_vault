@@ -171,8 +171,6 @@ print -P "%F{green}done.%F{$color}"
 
 kill $!
 
-ps aux | grep port-forward
-
 print -nP "Creating vault secret from generated vault generated certificates... "
 cp vault.pem vault.pem.bak
 cat vault.pem.bak ca.pem > vault.pem
@@ -201,11 +199,7 @@ do
 done 2>&1 >/dev/null
 print -P "%F{green}done.%F{$color}"
 
-ps aux | grep port-forward
-
 kubectl port-forward vault-0 8200:8200 2>&1 >/dev/null &
-
-ps aux | grep port-forward
 
 sleep 20
 
