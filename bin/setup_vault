@@ -280,7 +280,7 @@ vault-k8s-config -tls-skip-verify
 print -P "%F{green}done.%F{$color}"
 
 print -nP "Configuring secret secret backend in vault for this cluster... "
-vault-aws-config -tls-skip-verify -path
+vault-aws-config -tls-skip-verify
 print -P "%F{green}done.%F{$color}"
 
 VAULT_USER="vault-vault.k8s.local"
