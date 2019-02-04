@@ -1,8 +1,9 @@
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: apps/v1beta1
+kind: StatefulSet
 metadata:
   name: letsencrypt-vault-manager
 spec:
+  serviceName: letsencrypt-vault-manager
   replicas: 1
   selector:
     matchLabels:
@@ -28,7 +29,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: letsencrypt-vault-manager
-          image: gobadiah/letsencrypt-vault-manager:0.22
+          image: gobadiah/letsencrypt-vault-manager:0.24
           ports:
             - containerPort: 80
               name: http
