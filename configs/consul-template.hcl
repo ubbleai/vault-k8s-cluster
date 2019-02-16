@@ -2,10 +2,6 @@ vault {
   ssl {
     verify = false
   }
-
-  # certificates renewal should happend about 30 days before ttl
-  # consul-template should reload them after that, here it's 15 days.
-  grace = "21600m"
 }
 
 exec {
