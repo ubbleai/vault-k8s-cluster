@@ -29,7 +29,8 @@ spec:
         fsGroup: 1000
       containers:
         - name: letsencrypt-vault-manager
-          image: gobadiah/letsencrypt-vault-manager:0.31
+          imagePullPolicy: Always
+          image: gobadiah/letsencrypt-vault-manager:0.32
           ports:
             - containerPort: 80
               name: http
