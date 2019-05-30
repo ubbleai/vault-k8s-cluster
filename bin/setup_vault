@@ -265,11 +265,11 @@ print -nP "Configuring secret secret backend in vault for this cluster... "
 vault-aws-config -tls-skip-verify
 print -P "%F{green}done.%F{$color}"
 
-VAULT_USER="vault-vault.k8s.local"
+VAULT_USER="vault-$VAULT_CLUSTER"
 
 sed -E "s#HOSTED_ZONE_ID#${HOSTED_ZONE_ID[1,99]}#" \
   aws-policies/letsencrypt-vault-manager.json > /tmp/letsencrypt-vault-manager.json
-ARN=$(aws iam create-policy --policy-name "letsencrypt-vault-manager-vault.k8s.local" \
+ARN=$(aws iam create-policy --policy-name "letsencrypt-vault-manager-$VAULT_CLUSTER" \
   --policy-document file:///tmp/letsencrypt-vault-manager.json |
   jq -r '.Policy.Arn')
 aws iam attach-user-policy --user-name "$VAULT_USER" \

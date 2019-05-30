@@ -2,11 +2,11 @@
 
 # Cluster may be destroy here
 
-VAULT_USER="vault-vault.k8s.local"
+VAULT_USER="vault-$VAULT_CLUSTER"
 
 aws iam list-users | grep -q "\"$VAULT_USER\"" || exit 0
 
-aws iam list-attached-user-policies --user-name vault-vault.k8s.local | jq -r '.AttachedPolicies[].PolicyArn' |
+aws iam list-attached-user-policies --user-name vault-$VAULT_CLUSTER | jq -r '.AttachedPolicies[].PolicyArn' |
   while read arn
   do
     aws iam detach-user-policy --user-name $VAULT_USER --policy-arn $arn
